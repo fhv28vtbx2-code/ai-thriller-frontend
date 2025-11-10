@@ -14,23 +14,22 @@
         /* Base styles optimized for dark mode and mobile readability */
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #121212; /* Более глубокий черный фон */
-            color: #E0E0E0; /* Светлый текст для лучшей читаемости */
+            background-color: #121212; 
+            color: #E0E0E0; 
         }
         .story-container {
             max-height: 50vh; 
             overflow-y: auto;
             scrollbar-width: thin;
-            scrollbar-color: #dc2626 #3f3f46; /* Красный с темно-серым */
+            scrollbar-color: #dc2626 #3f3f46;
         }
         .story-container::-webkit-scrollbar {
             width: 8px;
         }
         .story-container::-webkit-scrollbar-thumb {
-            background-color: #dc2626; /* Яркий красный скроллбар */
+            background-color: #dc2626; 
             border-radius: 4px;
         }
-        /* Pulse animation for loading indicator */
         .image-loading {
             background: #272727;
             animation: pulse 1.5s infinite;
@@ -120,7 +119,6 @@
         // =================================================================================
         //                                 КОНФИГУРАЦИЯ БЭКЕНДА
         // =================================================================================
-        // Ссылка, вставленная пользователем:
         const BACKEND_URL = 'https://ai-thriller-backend.vercel.app/api/advance-story'; 
         // =================================================================================
 
@@ -129,9 +127,18 @@
         
         // --- Firebase Config Fix for Mini App ---
         let firebaseConfig = {};
+        const MOCK_CONFIG = {
+            apiKey: "AIzaSyC_mock_API_Key_for_Standalone_App",
+            authDomain: `${appId}.firebaseapp.com`,
+            projectId: appId, 
+            storageBucket: `${appId}.appspot.com`,
+            messagingSenderId: "123456789012",
+            appId: "1:123456789012:web:a0b1c2d3e4f5a6b7c8d9e0"
+        };
+
         try {
             // 1. Try to get config from environment (original method)
-            if (typeof __firebase_config !== 'undefined') {
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
                  firebaseConfig = JSON.parse(__firebase_config);
             }
         } catch (e) {
@@ -148,6 +155,12 @@
                     console.error("Error parsing localStorage config.");
                 }
             }
+        }
+
+        // 3. FALLBACK: Use MOCK config if none is found. This prevents initialization error (THE FIX)
+        if (Object.keys(firebaseConfig).length === 0) {
+            firebaseConfig = MOCK_CONFIG;
+            console.warn("FALLBACK: Using MOCK Firebase config as real config was not found.");
         }
         
         // Initialize Firebase variables
@@ -535,5 +548,3 @@
     </script>
 </body>
 </html>
-```
-

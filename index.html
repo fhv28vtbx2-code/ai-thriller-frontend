@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Триллер: Бесконечный Сюжет</title>
+    <!-- Load Tailwind CSS -->
+    <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
+    <!-- Load Tone.js for sound -->
+    <script src="[https://unpkg.com/tone@14.7.58/build/Tone.js](https://unpkg.com/tone@14.7.58/build/Tone.js)"></script>
+    <!-- Load Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "[https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js](https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js)";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "[https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js](https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js)";
+        import { getFirestore, setLogLevel, doc, setDoc, getDoc } from "[https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js](https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js)";
+
+        // Global variables provided by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase
+        let app, db, auth;
+        window.appId = appId;
+        const GAME_COLLECTION = 'game_saves';
+        const GAME_DOC_ID = 'thriller_game';
+
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            setLogLevel('debug');
+
+            // Sign in logic
+            (async () => {
+                await new Promise(resolve => {
+                    if (initialAuthToken) {
+                        signInWithCustomToken(auth, initialAuthToken).then(userCredential => {
+                            window.userId = userCredential.user.uid;
+                            resolve();
+                        }).catch(e => {
+                            console.error("Custom token sign in failed, using anonymous:", e);
+                            signInAnonymously(auth).then(userCredential => {
+                                window.userId = userCredential.user.uid;
+                                resolve();
+                            });
+                        });
+                    } else {
+                        signInAnonymously(auth).then(userCredential => {
+                            window.userId = userCredential.user.uid;
+                            resolve();
+                        });
+                    }
+                });
+                
+                // Expose Firestore objects globally
+                window.db = db;
+                window.auth = auth;
+                window.doc = doc;
+                window.setDoc = setDoc;
+                window.getDoc = getDoc;
+                
+                console.log("Firebase initialized and signed in. User ID:", window.userId);
+
+                // Start the game flow (loading modal)
+                document.addEventListener('DOMContentLoaded', () => {
+                    if (typeof window.showInitialPrompt === 'function') {
+                        window.showInitialPrompt();
+                    }
+                });
+
+            })();
+
+        } catch (error) {
+            console.error("Firebase initialization failed:", error);
+            document.getElementById('story-output').innerHTML = '<p class="text-red-400">Ошибка инициализации Firebase. Игра недоступна.</p>';
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a1a1a;
+        }
+        .story-container {
+            max-height: 50vh; 
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #be185d #3f3f46;
+        }
+        .story-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .story-container::-webkit-scrollbar-thumb {
+            background-color: #be185d;
+            border-radius: 4px;
+        }
+        .image-loading {
+            background: #3f3f46;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+    </style>
+</head>
+<body class="text-gray-100 min-h-screen p-4 sm:p-8 flex flex-col items-center">
+
+    <!-- Initial Prompt Modal -->
+    <div id="initial-prompt-modal" class="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center hidden">
+        <div class="bg-gray-800 p-8 rounded-xl max-w-sm w-full shadow-2xl border border-red-700">
+            <h2 id="modal-title" class="text-2xl font-bold text-red-500 mb-4">Начать игру</h2>
+            <p id="modal-text" class="text-gray-300 mb-6">Проверка сохраненного прогресса...</p>
+            <div id="modal-actions" class="flex justify-between space-x-4 hidden">
+                <button onclick="window.startGame(true); window.closeModal();" class="w-1/2 bg-gray-700 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-xl transition duration-200">
+                    Новая Игра
+                </button>
+                <button onclick="window.continueGame(); window.closeModal();" id="continue-button" class="w-1/2 bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-4 rounded-xl transition duration-200">
+                    Продолжить (Ход: 1)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="app-container" class="w-full max-w-lg mx-auto bg-gray-900 rounded-2xl shadow-2xl p-6 sm:p-8">
+
+        <header class="text-center mb-6">
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-red-500 tracking-wider mb-2">
+                СИЗИФ - AI-Триллер
+            </h1>
+            <p class="text-sm text-gray-400">Сюжет и иллюстрации генерируются нейросетью.</p>
+        </header>
+        
+        <!-- Image Container -->
+        <div id="image-container" class="mb-6 rounded-xl overflow-hidden shadow-xl border border-gray-700 aspect-[4/3] bg-gray-800 flex items-center justify-center">
+             <div id="image-loader" class="text-center">
+                <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p class="text-sm text-gray-400 mt-2">Иллюстрация создается ИИ...</p>
+             </div>
+        </div>
+
+        <!-- Story Output Area -->
+        <div id="story-output" class="story-container bg-gray-800 p-4 rounded-xl mb-6 border border-gray-700 transition-all duration-300">
+            <!-- Content will be set by JS -->
+            <p class="text-gray-400">Ожидание загрузки Firebase и проверки прогресса...</p>
+        </div>
+
+        <!-- Loading Indicator for Text/Logic -->
+        <div id="loading-spinner" class="text-center hidden mb-6">
+            <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-sm text-gray-400 mt-2">ИИ обдумывает твой следующий шаг...</p>
+        </div>
+
+        <!-- Choices Area -->
+        <div id="choices-container" class="flex flex-col space-y-3">
+            <!-- Buttons will be generated here -->
+        </div>
+
+        <!-- Restart Button -->
+        <div class="mt-8 text-center">
+             <button onclick="window.startGame(true)" id="restart-button" class="bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition duration-300 ease-in-out transform hover:scale-[1.02] active:scale-[0.98] border border-red-900 disabled:opacity-50" disabled>
+                Начать Новую Игру
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        // =================================================================================
+        //                                 КОНФИГУРАЦИЯ БЭКЕНДА
+        // =================================================================================
+        // !!! ВАЖНО: ЗАМЕНИТЬ ЭТОТ АДРЕС НА ВАШ АДРЕС VERCEL !!!
+        const BACKEND_URL = 'https://ai-thriller-backend.vercel.app//api/advance-story'; 
+        // Пример: '[https://ai-thriller-backend-xxxx.vercel.app/api/advance-story](https://ai-thriller-backend-xxxx.vercel.app/api/advance-story)' 
+        // =================================================================================
+
+        let chatHistory = [];
+        const choicesContainer = document.getElementById('choices-container');
+        const storyOutput = document.getElementById('story-output');
+        const imageContainer = document.getElementById('image-container');
+        const imageLoader = document.getElementById('image-loader');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const restartButton = document.getElementById('restart-button');
+        
+        let ambientSynth = null;
+        const GAME_COLLECTION = 'game_saves';
+        const GAME_DOC_ID = 'thriller_game';
+
+        // --- MODAL & INITIAL PROMPT LOGIC ---
+        
+        window.closeModal = () => {
+            document.getElementById('initial-prompt-modal').classList.add('hidden');
+        };
+
+        window.showInitialPrompt = async function() {
+            if (!window.db || !window.userId) {
+                setTimeout(window.showInitialPrompt, 500); 
+                return;
+            }
+            
+            document.getElementById('initial-prompt-modal').classList.remove('hidden');
+            document.getElementById('modal-title').textContent = 'СИЗИФ';
+            document.getElementById('modal-text').textContent = 'Проверяем сохраненный прогресс...';
+            document.getElementById('modal-actions').classList.add('hidden');
+
+            const savedGame = await window.loadGame();
+            const modalActions = document.getElementById('modal-actions');
+            const continueButton = document.getElementById('continue-button');
+
+            if (savedGame) {
+                const historyLength = JSON.parse(savedGame.chatHistoryJSON).length;
+                const turnNumber = Math.ceil(historyLength / 2);
+                
+                document.getElementById('modal-text').textContent = 'Найдена сохраненная игра.';
+                continueButton.textContent = `Продолжить (Ход: ${turnNumber})`;
+                continueButton.disabled = false;
+            } else {
+                document.getElementById('modal-text').textContent = 'Сохраненных игр не найдено. Начните новую игру.';
+                continueButton.disabled = true;
+            }
+            modalActions.classList.remove('hidden');
+        };
+
+        // --- GAME SAVING/LOADING (Firestore) ---
+
+        window.continueGame = function() {
+            window.startAudio(); 
+            window.loadGame().then(savedGame => {
+                if (savedGame) {
+                    chatHistory = JSON.parse(savedGame.chatHistoryJSON);
+                    
+                    storyOutput.innerHTML = '';
+                    
+                    // Display the last user choice before calling the API for the model response
+                    const lastUserPart = chatHistory[chatHistory.length - 1].parts[0].text;
+                    storyOutput.innerHTML = `<div class="mt-4 border-t border-gray-700 pt-4"><p class="font-semibold text-red-400">👉 Последний Выбор:</p><p class="italic text-gray-300">"${lastUserPart.replace('Мой выбор: ', '').replace('. Продолжи историю и дай 3 новых выбора.', '')}"</p></div>`;
+
+                    // Now, resume the story by calling the API
+                    advanceStory();
+                } else {
+                    window.startGame(true); 
+                }
+            });
+        };
+        
+        window.loadGame = async function() {
+            try {
+                const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
+                const docSnap = await window.getDoc(docRef);
+
+                if (docSnap.exists() && docSnap.data().chatHistoryJSON && JSON.parse(docSnap.data().chatHistoryJSON).length > 0) {
+                    return docSnap.data();
+                }
+            } catch(e) {
+                console.error("Error loading game:", e);
+            }
+            return null;
+        };
+
+        async function saveGame(storyData) {
+            // Only save if the story is NOT over
+            if (storyData.storySegment.toUpperCase().includes("КОНЕЦ ИГРЫ:") || !window.db || !window.userId) return;
+
+            // Save the current chat history for context
+            const dataToSave = {
+                chatHistoryJSON: JSON.stringify(chatHistory),
+                lastSegment: storyData.storySegment,
+                timestamp: new Date().toISOString()
+            };
+            
+            try {
+                const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
+                await window.setDoc(docRef, dataToSave, { merge: true });
+            } catch(e) {
+                console.error("Error saving game:", e);
+            }
+        }
+        
+        window.addEventListener('beforeunload', () => {
+             console.log("Saving game state on unload attempt...");
+        });
+
+
+        // --- AMBIENCE/SOUND LOGIC (Tone.js) ---
+
+        let ambientPart = null;
+
+        function startAudio() {
+            if (Tone.context.state !== 'running') {
+                Tone.start();
+                initAmbiance();
+            }
+        }
+
+        function initAmbiance() {
+            const reverb = new Tone.Reverb({ decay: 5, wet: 0.5 }).toDestination();
+            
+            ambientSynth = new Tone.PolySynth(Tone.Synth, {
+                oscillator: { type: "sine" },
+                envelope: {
+                    attack: 4,
+                    decay: 0.1,
+                    sustain: 1,
+                    release: 6
+                }
+            }).chain(new Tone.Filter(300, "lowpass"), reverb);
+        }
+
+        function playAmbiance(context) {
+            if (!ambientSynth) return;
+            
+            let notes = ["C3", "G#3", "D#4"]; 
+            let loopTime = "8m"; 
+
+            const lowerCaseContext = context.toLowerCase();
+            
+            if (lowerCaseContext.includes("кровь") || lowerCaseContext.includes("опасно") || lowerCaseContext.includes("резк")) {
+                notes = ["C2", "C#2", "F#2"]; 
+                loopTime = "4m";
+            } else if (lowerCaseContext.includes("свет") || lowerCaseContext.includes("споко") || lowerCaseContext.includes("раздум")) {
+                notes = ["C3", "E3", "G3", "A3"]; 
+                loopTime = "12m";
+            } else if (lowerCaseContext.includes("заперт") || lowerCaseContext.includes("тайн")) {
+                notes = ["E3", "G3", "B3", "C4"]; 
+                loopTime = "8m";
+            }
+
+            Tone.Transport.stop();
+            Tone.Transport.clear();
+
+            ambientPart = new Tone.Loop(time => {
+                notes.forEach((note, index) => {
+                    ambientSynth.triggerAttackRelease(note, "4n", time + index * 0.5);
+                });
+            }, loopTime);
+
+            Tone.Transport.bpm.value = 40; 
+            Tone.Transport.start();
+            ambientPart.start(0);
+        }
+
+        // --- GAME FLOW LOGIC ---
+
+        window.startGame = function(isRestart = false) {
+            window.startAudio(); 
+            
+            storyOutput.innerHTML = '';
+            choicesContainer.innerHTML = '';
+            
+            if (isRestart) {
+                chatHistory = [];
+                const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
+                window.setDoc(docRef, { chatHistoryJSON: "[]", lastSegment: "Новая игра начата", timestamp: new Date().toISOString() });
+            }
+            
+            restartButton.disabled = true;
+
+            const initialPrompt = isRestart
+                ? "Начни совершенно новую, непредсказуемую историю-триллер с новой темой и персонажем. Убедись, что сюжет не повторяет предыдущие игры."
+                : "Начни сюжет. Главный герой просыпается и обнаруживает, что что-то в его привычной жизни катастрофически изменилось.";
+
+            chatHistory.push({ role: "user", parts: [{ text: initialPrompt }] });
+
+            storyOutput.innerHTML = '<p class="text-red-400 italic">Начинаем новую историю... Пожалуйста, подождите.</p>';
+            advanceStory();
+        };
+
+        window.makeChoice = function(choiceText) {
+            storyOutput.innerHTML += `<div class="mt-4 border-t border-gray-700 pt-4"><p class="font-semibold text-red-400">👉 Выбор:</p><p class="italic text-gray-300">"${choiceText}"</p></div>`;
+            choicesContainer.innerHTML = ''; 
+            
+            chatHistory.push({ role: "user", parts: [{ text: `Мой выбор: ${choiceText}. Продолжи историю и дай 3 новых выбора.` }] });
+
+            storyOutput.scrollTop = storyOutput.scrollHeight;
+
+            advanceStory();
+        };
+
+        async function advanceStory() {
+            loadingSpinner.classList.remove('hidden');
+            
+            try {
+                const response = await fetch(BACKEND_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chatHistory: chatHistory })
+                });
+
+                if (!response.ok) {
+                    const errorDetails = await response.json();
+                    throw new Error(`Backend Error: ${response.status} - ${errorDetails.error || 'Unknown error'}`);
+                }
+                
+                const data = await response.json();
+
+                updateUI({
+                    storySegment: data.storySegment,
+                    choices: data.choices
+                }, data.imageUrl);
+                
+                // Add model response to history for next turn
+                chatHistory.push({ role: "model", parts: [{ text: JSON.stringify(data) }] });
+                
+            } catch (error) {
+                console.error("Critical error in advanceStory (Backend):", error);
+                storyOutput.innerHTML += `<p class="text-red-500 mt-4">Критическая ошибка: Проблема связи с сервером (${error.message}). Попробуйте начать заново.</p>`;
+                restartButton.disabled = false;
+            } finally {
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+
+        function updateUI(storyData, imageUrl) {
+            loadingSpinner.classList.add('hidden');
+
+            const newSegment = storyData.storySegment.trim();
+            const choices = Array.isArray(storyData.choices) ? storyData.choices : [];
+            
+            storyOutput.innerHTML += `<div class="mt-6 border-t border-gray-700 pt-4"><p class="text-gray-100">${newSegment}</p></div>`;
+
+            storyOutput.scrollTop = storyOutput.scrollHeight;
+
+            if (imageUrl) {
+                displayIllustration(imageUrl);
+                playAmbiance(newSegment);
+            } else {
+                 imageContainer.innerHTML = `<p class="text-sm text-gray-500 p-4">Иллюстрация не сгенерирована.</p>`;
+            }
+
+            const isGameOver = newSegment.toUpperCase().includes("КОНЕЦ ИГРЫ:") || choices.length === 0;
+
+            if (isGameOver) {
+                choicesContainer.innerHTML = `<p class="text-center text-lg text-red-500 font-bold mt-4">*** КОНЕЦ ИСТОРИИ ***</p>`;
+                restartButton.disabled = false;
+                Tone.Transport.stop(); 
+                const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
+                window.setDoc(docRef, { chatHistoryJSON: "[]", lastSegment: "Игра завершена", timestamp: new Date().toISOString() });
+
+            } else {
+                choicesContainer.innerHTML = '';
+                choices.forEach((choice, index) => {
+                    if (index < 3) { 
+                        const button = document.createElement('button');
+                        button.className = 'choice-button bg-gray-700 hover:bg-red-600 text-gray-100 font-medium py-3 px-4 rounded-xl shadow-md transition duration-200 ease-in-out text-left border border-gray-600';
+                        button.textContent = `${index + 1}. ${choice.trim()}`;
+                        button.onclick = () => window.makeChoice(choice.trim());
+                        choicesContainer.appendChild(button);
+                    }
+                });
+
+                saveGame(storyData); 
+            }
+        }
+
+        function displayIllustration(imageUrl) {
+            imageContainer.classList.remove('image-loading');
+            imageLoader.classList.add('hidden');
+            
+            const img = document.createElement('img');
+            img.src = imageUrl;
+            img.alt = "Иллюстрация к истории";
+            img.className = 'w-full h-full object-cover rounded-xl';
+            
+            imageContainer.innerHTML = '';
+            imageContainer.appendChild(img);
+        }
+
+        
+    </script>
+</body>
+</html>
+```
+

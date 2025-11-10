@@ -1,541 +1,180 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>СИЗИФ - AI-Триллер</title>
+const express = require('express');
+const cors = require('cors');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// --- Configuration ---
+// Vercel inserts the environment variable here directly.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = 'gemini-2.5-flash-preview-09-2025';
+const IMAGEN_MODEL = 'imagen-4.0-generate-001';
+
+if (!GEMINI_API_KEY) {
+    console.error("CRITICAL ERROR: GEMINI_API_KEY environment variable is NOT set.");
+    // Crash the server immediately if the key is missing to prevent silent failures
+    throw new Error("GEMINI_API_KEY not found. Server cannot start.");
+}
+
+// Critical System Instruction for the AI Game Master
+const SYSTEM_PROMPT = `
+    Ты — Мастер Игры и Сюжета для уникального психологического триллера/мистического квеста.
+    Твоя главная задача — обеспечить, чтобы КАЖДАЯ ИГРА была абсолютно непредсказуемой и имела уникальную концовку.
+    Сюжет должен быть напряженным, фокусироваться на тайнах, предательстве, ложных воспоминаниях, или паранормальных явлениях.
+
+    Соблюдай СТРОГИЙ ФОРМАТ ВЫВОДА JSON.
+    Обязательные поля:
+    1. storySegment: (текст нового сегмента истории). Всегда пиши на русском языке.
+    2. choices: (массив, содержащий ровно 3 варианта действий). Выборы должны быть морально сложными, не иметь очевидно правильного ответа, и значительно влиять на дальнейший сюжет.
+
+    Если история достигла логического завершения (герой выжил, умер, раскрыл тайну и т.д.), storySegment должен содержать фразу "КОНЕЦ ИГРЫ:", а choices должны быть пустым массивом [].
+`;
+
+// --- Middleware Setup ---
+// Universal CORS Fix: Allow requests from anywhere (including your frontend domain)
+app.use(cors()); 
+app.use(express.json());
+
+// --- Helper Functions ---
+
+/**
+ * Handles API calls with exponential backoff using built-in fetch.
+ */
+async function fetchWithRetry(url, options, retries = 3) {
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                if (response.status >= 400 && response.status < 500) {
+                    // Log the error but continue retrying for API errors
+                    console.error(`Client API error ${response.status} on attempt ${attempt + 1}.`);
+                }
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        } catch (error) {
+            console.error(`Attempt ${attempt + 1} failed:`, error.message);
+            if (attempt < retries - 1) {
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+            } else {
+                throw new Error(`Failed to fetch data after ${retries} attempts. Last error: ${error.message}`);
+            }
+        }
+    }
+}
+
+/**
+ * Calls the Gemini API to get the next story segment and choices.
+ */
+async function getNextStorySegment(chatHistory) {
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
     
-    <!-- Load Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Load Tone.js for sound effects (non-module) -->
-    <script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
-    <!-- Load Crypto for UUID fallback -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-
-    <style>
-        /* Base styles optimized for dark mode and mobile readability */
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #121212; 
-            color: #E0E0E0; 
-        }
-        .story-container {
-            max-height: 50vh; 
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: #dc2626 #3f3f46;
-        }
-        .story-container::-webkit-scrollbar {
-            width: 8px;
-        }
-        .story-container::-webkit-scrollbar-thumb {
-            background-color: #dc2626; 
-            border-radius: 4px;
-        }
-        .image-loading {
-            background: #272727;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 0.7; }
-            50% { opacity: 1; }
-        }
-        .choice-button {
-            transition: all 0.2s;
-        }
-    </style>
-</head>
-<body class="min-h-screen p-4 sm:p-8 flex flex-col items-center">
-
-    <!-- Initial Prompt Modal -->
-    <div id="initial-prompt-modal" class="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center hidden">
-        <div class="bg-[#1e1e1e] p-8 rounded-2xl max-w-sm w-full shadow-2xl border border-red-700">
-            <h2 id="modal-title" class="text-3xl font-bold text-red-500 mb-4">Начать игру</h2>
-            <p id="modal-text" class="text-gray-400 mb-6">Проверка сохраненного прогресса...</p>
-            <div id="modal-actions" class="flex justify-between space-x-4 hidden">
-                <button onclick="window.startGame(true); window.closeModal();" class="w-1/2 bg-gray-700 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition duration-200">
-                    Новая Игра
-                </button>
-                <button onclick="window.continueGame(); window.closeModal();" id="continue-button" class="w-1/2 bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition duration-200" disabled>
-                    Продолжить (Ход: 1)
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <div id="app-container" class="w-full max-w-xl mx-auto bg-[#1a1a1a] rounded-3xl shadow-2xl p-6 sm:p-8 border border-gray-700">
-
-        <header class="text-center mb-6">
-            <h1 class="text-4xl sm:text-5xl font-black text-red-500 tracking-wider mb-1">
-                СИЗИФ
-            </h1>
-            <p class="text-sm text-gray-400">AI-Триллер с бесконечным сюжетом</p>
-            <p id="user-info" class="text-xs text-gray-600 mt-2 hidden">UserID: Загрузка...</p>
-        </header>
-        
-        <!-- Image Container -->
-        <div id="image-container" class="mb-6 rounded-2xl overflow-hidden shadow-2xl border border-red-800 aspect-[4/3] bg-gray-800 flex items-center justify-center">
-             <div id="image-loader" class="text-center p-8">
-                <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <p class="text-sm text-gray-400 mt-2">Иллюстрация создается ИИ...</p>
-             </div>
-        </div>
-
-        <!-- Story Output Area -->
-        <div id="story-output" class="story-container bg-[#272727] p-5 rounded-xl mb-6 border border-gray-700 transition-all duration-300 shadow-inner">
-            <p class="text-gray-400">Ожидание загрузки Firebase и проверки прогресса...</p>
-        </div>
-
-        <!-- Loading Indicator for Text/Logic -->
-        <div id="loading-spinner" class="text-center hidden mb-6">
-            <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="text-sm text-gray-400 mt-2">ИИ обдумывает твой следующий шаг...</p>
-        </div>
-
-        <!-- Choices Area -->
-        <div id="choices-container" class="flex flex-col space-y-3">
-            <!-- Buttons will be generated here -->
-        </div>
-
-        <!-- Restart Button -->
-        <div class="mt-8 text-center">
-             <button onclick="window.startGame(true)" id="restart-button" class="bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition duration-300 ease-in-out transform hover:scale-[1.02] active:scale-[0.98] border border-red-900 disabled:opacity-50">
-                Начать Новую Игру
-            </button>
-        </div>
-
-    </div>
-
-    <!-- Firebase Initialization and Game Logic (Module Script) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"; 
-        import { getFirestore, setLogLevel, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // =================================================================================
-        //                                 КОНФИГУРАЦИЯ БЭКЕНДА
-        // =================================================================================
-        // Ссылка на ваш сервер Vercel:
-        const BACKEND_URL = 'https://ai-thriller-backend.vercel.app/api/advance-story'; 
-        // =================================================================================
-
-        // Global variables provided by the environment
-        const appId = 'app-sisyphus'; // HARDCODED app ID to ensure project consistency
-        
-        // --- Firebase Config Fix for Mini App ---
-        let firebaseConfig = {};
-        
-        // MOCK/Fallback configuration (Critical for standalone launch)
-        const MOCK_CONFIG = {
-            // Using a simple, non-sensitive structure that allows initialization to pass
-            apiKey: "AIzaSyC_mock_API_Key_for_Standalone_App", 
-            authDomain: "sisyphus-mock.firebaseapp.com",
-            projectId: "sisyphus-mock", 
-            appId: "1:123456789012:web:a0b1c2d3e4f5a6b7c8d9e0"
-        };
-
-        // 1. Try to get config from localStorage (most likely to succeed outside Canvas)
-        const storedConfig = localStorage.getItem('firebaseConfig');
-        if (storedConfig) {
-            try {
-                firebaseConfig = JSON.parse(storedConfig);
-            } catch(e) { console.error("Error parsing localStorage config."); }
-        }
-
-        // 2. FALLBACK: Use MOCK config if none is found.
-        if (Object.keys(firebaseConfig).length === 0) {
-            firebaseConfig = MOCK_CONFIG;
-            console.warn("FALLBACK: Using MOCK Firebase config.");
-        }
-        
-        // Initialize Firebase variables
-        let app, db, auth;
-        window.appId = appId;
-        const GAME_COLLECTION = 'game_saves';
-        const GAME_DOC_ID = 'thriller_game';
-        window.isFirebaseReady = false;
-        
-        // Exposed DOM elements
-        const choicesContainer = document.getElementById('choices-container');
-        const storyOutput = document.getElementById('story-output');
-        const imageContainer = document.getElementById('image-container');
-        const imageLoader = document.getElementById('image-loader');
-        const loadingSpinner = document.getElementById('loading-spinner');
-        const restartButton = document.getElementById('restart-button');
-        const userInfo = document.getElementById('user-info');
-        
-        let chatHistory = [];
-        let ambientSynth = null;
-        
-        // --- Custom UUID generation for reliable anonymous login ---
-        function getOrCreateUserId() {
-            let userId = localStorage.getItem('user_id_v2');
-            if (!userId) {
-                // Generate a simple UUID using CryptoJS (loaded via CDN)
-                userId = 'anon-' + (CryptoJS.lib.WordArray.random(16).toString());
-                localStorage.setItem('user_id_v2', userId);
-            }
-            return userId;
-        }
-
-        // --- Main Initialization Block ---
-        if (Object.keys(firebaseConfig).length > 0) {
-            try {
-                app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                setLogLevel('debug');
-                
-                // IMPORTANT: Store config in localStorage for future Mini App launches
-                localStorage.setItem('firebaseConfig', JSON.stringify(firebaseConfig));
-
-                // Sign in logic - Simplified and uses custom ID for stable storage path
-                (async () => {
-                    // Try to sign in anonymously
-                    await signInAnonymously(auth).then(userCredential => {
-                        // Use the anonymous UID provided by Firebase for the current session
-                        window.userId = userCredential.user.uid; 
-                    }).catch(e => {
-                        console.error("Anonymous sign in failed, using local fallback ID:", e);
-                        // Fallback to local UUID if sign-in fails entirely (rare)
-                        window.userId = getOrCreateUserId(); 
-                    });
-                    
-                    // Expose Firestore objects globally
-                    window.db = db;
-                    window.auth = auth;
-                    window.doc = doc;
-                    window.setDoc = setDoc;
-                    window.getDoc = getDoc;
-                    window.isFirebaseReady = true; // Set flag to true
-
-                    console.log("Firebase initialized and signed in. User ID:", window.userId);
-
-                    // Start the game flow (loading modal)
-                    document.addEventListener('DOMContentLoaded', () => {
-                        if (typeof window.showInitialPrompt === 'function') {
-                            window.showInitialPrompt();
-                        }
-                    });
-
-                })();
-
-            } catch (error) {
-                console.error("Firebase initialization failed:", error);
-                document.getElementById('story-output').innerHTML = '<p class="text-red-400">Ошибка инициализации Firebase. Игра недоступна. (Код 102)</p>';
-            }
-        } else {
-             // This case should be prevented by the MOCK config fallback
-             document.getElementById('story-output').innerHTML = '<p class="text-red-400">КРИТИЧЕСКАЯ ОШИБКА: Конфигурация Firebase полностью отсутствует. </p>';
-        }
-        
-        
-        // --- UTILITY FUNCTIONS ---
-
-        // Waits until Firebase is ready, then executes callback
-        function waitForFirebase(callback) {
-            if (window.isFirebaseReady) {
-                callback();
-            } else {
-                setTimeout(() => waitForFirebase(callback), 100);
+    const payload = {
+        contents: chatHistory,
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: "OBJECT",
+                properties: {
+                    "storySegment": { "type": "STRING" },
+                    "choices": { "type": "ARRAY", "items": { "type": "STRING" } }
+                },
+                "propertyOrdering": ["storySegment", "choices"]
             }
         }
-        
-        // --- MODAL & INITIAL PROMPT LOGIC ---
-        
-        window.closeModal = () => {
-            document.getElementById('initial-prompt-modal').classList.add('hidden');
-        };
+    };
 
-        window.showInitialPrompt = async function() {
-            waitForFirebase(async () => {
-                userInfo.textContent = `UserID: ${window.userId}`;
-                userInfo.classList.remove('hidden');
+    const result = await fetchWithRetry(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
 
-                document.getElementById('initial-prompt-modal').classList.remove('hidden');
-                document.getElementById('modal-title').textContent = 'СИЗИФ';
-                document.getElementById('modal-text').textContent = 'Проверяем сохраненный прогресс...';
-                document.getElementById('modal-actions').classList.add('hidden');
+    if (result.candidates && result.candidates.length > 0) {
+        const jsonText = result.candidates[0].content.parts[0].text;
+        return JSON.parse(jsonText);
+    } else {
+        throw new Error("Invalid response structure from Gemini.");
+    }
+}
 
-                const savedGame = await window.loadGame();
-                const modalActions = document.getElementById('modal-actions');
-                const continueButton = document.getElementById('continue-button');
+/**
+ * Calls Imagen API to generate a unique illustration.
+ */
+async function generateIllustration(storySegment) {
+    // Helper to derive a concise image prompt
+    const extractImagePrompt = (segment) => {
+        const firstSentenceMatch = segment.match(/^(.{20,100}[.!?])/);
+        const basePrompt = firstSentenceMatch ? firstSentenceMatch[1] : "A dark and atmospheric psychological thriller scene, cinematic lighting, 8k, photorealistic.";
+        // Ensure prompt is in English for better Imagen results
+        return `Cinematic, dark, high contrast, highly detailed psychological thriller illustration of: "${basePrompt}". Horror, dramatic shadows, volumetric light, photorealistic, 4K, low angle.`;
+    };
 
-                if (savedGame) {
-                    try {
-                        const historyLength = JSON.parse(savedGame.chatHistoryJSON).length;
-                        const turnNumber = Math.ceil(historyLength / 2);
-                        
-                        document.getElementById('modal-text').textContent = 'Найдена сохраненная игра.';
-                        continueButton.textContent = `Продолжить (Ход: ${turnNumber})`;
-                        continueButton.disabled = false;
-                    } catch(e) {
-                         // Corrupted save, force new game
-                        document.getElementById('modal-text').textContent = 'Ошибка загрузки сохранения. Начните новую игру.';
-                        continueButton.disabled = true;
-                    }
+    const imagePrompt = extractImagePrompt(storySegment);
+    const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGEN_MODEL}:predict?key=${GEMINI_API_KEY}`;
+    const imagenPayload = {
+        instances: { prompt: imagePrompt },
+        parameters: { "sampleCount": 1, "aspectRatio": "4:3" }
+    };
 
-                } else {
-                    document.getElementById('modal-text').textContent = 'Сохраненных игр не найдено. Начните новую игру.';
-                    continueButton.disabled = true;
-                }
-                modalActions.classList.remove('hidden');
-            });
-        };
+    const result = await fetchWithRetry(imagenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(imagenPayload)
+    });
 
-        // --- GAME SAVING/LOADING (Firestore) ---
+    if (result.predictions && result.predictions.length > 0 && result.predictions[0].bytesBase64Encoded) {
+        // Return base64 image data
+        return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+    } else {
+        console.error("Image generation failed: No base64 data returned.");
+        // Return null instead of erroring out completely
+        return null;
+    }
+}
 
-        window.continueGame = function() {
-            window.startAudio(); 
-            window.loadGame().then(savedGame => {
-                if (savedGame) {
-                    try {
-                        chatHistory = JSON.parse(savedGame.chatHistoryJSON);
-                        
-                        storyOutput.innerHTML = `<p class="text-gray-300">${savedGame.lastSegment}</p>`;
-                        
-                        // Call the API to resume the story
-                        advanceStory();
-                    } catch (e) {
-                         // If JSON parse fails, start a new game
-                        console.error("Failed to parse saved history, starting new game.");
-                        window.startGame(true);
-                    }
-                } else {
-                    window.startGame(true); 
-                }
-            });
-        };
-        
-        window.loadGame = async function() {
-            if (!window.db || !window.userId) return null;
-            try {
-                const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
-                const docSnap = await window.getDoc(docRef);
+// --- API Endpoint ---
 
-                if (docSnap.exists() && docSnap.data().chatHistoryJSON) {
-                    return docSnap.data();
-                }
-            } catch(e) {
-                console.error("Error loading game:", e);
-            }
-            return null;
-        };
+app.post('/api/advance-story', async (req, res) => {
+    // 1. Validate Input
+    const { chatHistory } = req.body;
+    if (!chatHistory || !Array.isArray(chatHistory)) {
+        return res.status(400).json({ error: "Invalid chat history provided." });
+    }
 
-        async function saveGame(storyData) {
-            if (!window.isFirebaseReady || storyData.storySegment.toUpperCase().includes("КОНЕЦ ИГРЫ:") || !window.db || !window.userId) return;
+    try {
+        // 2. Generate Next Story Segment (Text/Choices)
+        const storyData = await getNextStorySegment(chatHistory);
 
-            const dataToSave = {
-                chatHistoryJSON: JSON.stringify(chatHistory),
-                lastSegment: storyData.storySegment,
-                timestamp: new Date().toISOString()
-            };
-            
-            try {
-                const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
-                await window.setDoc(docRef, dataToSave, { merge: true });
-            } catch(e) {
-                console.error("Error saving game:", e);
-            }
-        }
-        
-        // --- AMBIENCE/SOUND LOGIC (Tone.js) ---
-
-        let ambientPart = null;
-
-        window.startAudio = function() {
-            if (Tone.context.state !== 'running') {
-                Tone.start();
-                initAmbiance();
-            }
+        // 3. Generate Illustration (In parallel or sequentially, here sequentially for simplicity)
+        let imageUrl = null;
+        if (!storyData.storySegment.toUpperCase().includes("КОНЕЦ ИГРЫ:")) {
+             // Pass the story segment to Imagen
+             imageUrl = await generateIllustration(storyData.storySegment);
         }
 
-        function initAmbiance() {
-            const reverb = new Tone.Reverb({ decay: 5, wet: 0.5 }).toDestination();
-            
-            ambientSynth = new Tone.PolySynth(Tone.Synth, {
-                oscillator: { type: "sine" },
-                envelope: {
-                    attack: 4,
-                    decay: 0.1,
-                    sustain: 1,
-                    release: 6
-                }
-            }).chain(new Tone.Filter(300, "lowpass"), reverb);
-        }
+        // 4. Send combined response back to the Mini App
+        res.json({
+            storySegment: storyData.storySegment,
+            choices: storyData.choices,
+            imageUrl: imageUrl
+        });
 
-        function playAmbiance(context) {
-            if (!ambientSynth) return;
-            
-            let notes = ["C3", "G#3", "D#4"]; 
-            let loopTime = "8m"; 
+    } catch (error) {
+        console.error("API Call Error:", error.message);
+        res.status(500).json({ error: "Failed to generate story segment or image.", details: error.message });
+    }
+});
 
-            const lowerCaseContext = context.toLowerCase();
-            
-            if (lowerCaseContext.includes("кровь") || lowerCaseContext.includes("опасно") || lowerCaseContext.includes("резк")) {
-                notes = ["C2", "C#2", "F#2"]; 
-                loopTime = "4m";
-            } else if (lowerCaseContext.includes("свет") || lowerCaseContext.includes("споко") || lowerCaseContext.includes("раздум")) {
-                notes = ["C3", "E3", "G3", "A3"]; 
-                loopTime = "12m";
-            } else if (lowerCaseContext.includes("заперт") || lowerCaseContext.includes("тайн")) {
-                notes = ["E3", "G3", "B3", "C4"]; 
-                loopTime = "8m";
-            }
 
-            Tone.Transport.stop();
-            Tone.Transport.clear();
+// Vercel runs serverless functions, so we don't need app.listen()
+// However, the function structure remains for Vercel's use. 
+// If Vercel still needs a running port for debugging, keep this:
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(port, () => {
+        console.log(`Server running securely on port ${port} (Local Development)`);
+    });
+}
 
-            ambientPart = new Tone.Loop(time => {
-                notes.forEach((note, index) => {
-                    ambientSynth.triggerAttackRelease(note, "4n", time + index * 0.5);
-                });
-            }, loopTime);
-
-            Tone.Transport.bpm.value = 40; 
-            Tone.Transport.start();
-            ambientPart.start(0);
-        }
-
-        // --- GAME FLOW LOGIC ---
-
-        window.startGame = function(isRestart = false) {
-            window.startAudio(); 
-            
-            storyOutput.innerHTML = '';
-            choicesContainer.innerHTML = '';
-            
-            if (isRestart) {
-                chatHistory = [];
-                const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
-                window.setDoc(docRef, { chatHistoryJSON: "[]", lastSegment: "Новая игра начата", timestamp: new Date().toISOString() });
-            }
-            
-            restartButton.disabled = true;
-
-            const initialPrompt = isRestart
-                ? "Начни совершенно новую, непредсказуемую историю-триллер с новой темой и персонажем. Убедись, что сюжет не повторяет предыдущие игры."
-                : "Начни сюжет. Главный герой просыпается и обнаруживает, что что-то в его привычной жизни катастрофически изменилось.";
-
-            chatHistory.push({ role: "user", parts: [{ text: initialPrompt }] });
-
-            storyOutput.innerHTML = '<p class="text-red-400 italic">Начинаем новую историю... Пожалуйста, подождите.</p>';
-            advanceStory();
-        };
-
-        window.makeChoice = function(choiceText) {
-            storyOutput.innerHTML += `<div class="mt-4 border-t border-gray-800 pt-4"><p class="font-semibold text-red-400">👉 Выбор:</p><p class="italic text-gray-300">"${choiceText}"</p></div>`;
-            choicesContainer.innerHTML = ''; 
-            
-            chatHistory.push({ role: "user", parts: [{ text: `Мой выбор: ${choiceText}. Продолжи историю и дай 3 новых выбора.` }] });
-
-            storyOutput.scrollTop = storyOutput.scrollHeight;
-
-            advanceStory();
-        };
-
-        async function advanceStory() {
-            loadingSpinner.classList.remove('hidden');
-            imageContainer.classList.add('image-loading');
-            imageContainer.innerHTML = '';
-            imageLoader.classList.remove('hidden');
-
-            
-            try {
-                const response = await fetch(BACKEND_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chatHistory: chatHistory })
-                });
-
-                if (!response.ok) {
-                    const errorDetails = await response.json();
-                    throw new Error(`Backend Error: ${response.status} - ${errorDetails.error || 'Unknown error'}`);
-                }
-                
-                const data = await response.json();
-
-                updateUI({
-                    storySegment: data.storySegment,
-                    choices: data.choices
-                }, data.imageUrl);
-                
-                // Add model response to history for next turn
-                chatHistory.push({ role: "model", parts: [{ text: JSON.stringify(data) }] });
-                
-            } catch (error) {
-                console.error("Critical error in advanceStory (Backend):", error);
-                storyOutput.innerHTML += `<p class="text-red-500 mt-4">Критическая ошибка: Проблема связи с сервером (${error.message}). Попробуйте начать заново.</p>`;
-                restartButton.disabled = false;
-            } finally {
-                loadingSpinner.classList.add('hidden');
-            }
-        }
-
-        function updateUI(storyData, imageUrl) {
-            loadingSpinner.classList.add('hidden');
-
-            const newSegment = storyData.storySegment.trim();
-            const choices = Array.isArray(storyData.choices) ? storyData.choices : [];
-            
-            // UI Improvement: Use lighter text for the story output
-            storyOutput.innerHTML += `<div class="mt-6 border-t border-gray-800 pt-4"><p class="text-gray-200">${newSegment}</p></div>`;
-
-            storyOutput.scrollTop = storyOutput.scrollHeight;
-
-            if (imageUrl) {
-                displayIllustration(imageUrl);
-                playAmbiance(newSegment);
-            } else {
-                 imageContainer.innerHTML = `<p class="text-sm text-gray-500 p-4">Иллюстрация не сгенерирована.</p>`;
-            }
-
-            const isGameOver = newSegment.toUpperCase().includes("КОНЕЦ ИГРЫ:") || choices.length === 0;
-
-            if (isGameOver) {
-                choicesContainer.innerHTML = `<p class="text-center text-xl text-red-500 font-bold mt-4">*** КОНЕЦ ИСТОРИИ ***</p>`;
-                restartButton.disabled = false;
-                Tone.Transport.stop(); 
-                const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
-                window.setDoc(docRef, { chatHistoryJSON: "[]", lastSegment: "Игра завершена", timestamp: new Date().toISOString() });
-
-            } else {
-                choicesContainer.innerHTML = '';
-                choices.forEach((choice, index) => {
-                    if (index < 3) { 
-                        const button = document.createElement('button');
-                        // UI Improvement: Enhanced button style
-                        button.className = 'choice-button bg-[#272727] hover:bg-red-800 text-gray-100 font-medium py-3 px-4 rounded-xl shadow-md transition duration-200 ease-in-out text-left border border-red-700/50 hover:border-red-500';
-                        button.textContent = `${index + 1}. ${choice.trim()}`;
-                        button.onclick = () => window.makeChoice(choice.trim());
-                        choicesContainer.appendChild(button);
-                    }
-                });
-
-                saveGame(storyData); 
-            }
-        }
-
-        function displayIllustration(imageUrl) {
-            imageContainer.classList.remove('image-loading');
-            imageLoader.classList.add('hidden');
-            
-            const img = document.createElement('img');
-            img.src = imageUrl;
-            img.alt = "Иллюстрация к истории";
-            img.className = 'w-full h-full object-cover rounded-2xl';
-            
-            imageContainer.innerHTML = '';
-            imageContainer.appendChild(img);
-        }
-
-        
-    </script>
-</body>
-</html>
+module.exports = app;

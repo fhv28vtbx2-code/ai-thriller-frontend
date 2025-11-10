@@ -9,6 +9,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Load Tone.js for sound effects (non-module) -->
     <script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+    <!-- Load Crypto for UUID fallback -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 
     <style>
         /* Base styles optimized for dark mode and mobile readability */
@@ -113,48 +115,43 @@
     <!-- Firebase Initialization and Game Logic (Module Script) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"; // Removed signInWithCustomToken
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"; 
         import { getFirestore, setLogLevel, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
         //                                 КОНФИГУРАЦИЯ БЭКЕНДА
         // =================================================================================
+        // Ссылка на ваш сервер Vercel:
         const BACKEND_URL = 'https://ai-thriller-backend.vercel.app/api/advance-story'; 
         // =================================================================================
 
         // Global variables provided by the environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const appId = 'app-sisyphus'; // HARDCODED app ID to ensure project consistency
         
         // --- Firebase Config Fix for Mini App ---
         let firebaseConfig = {};
-        // Mock/Fallback configuration (used if environment/localStorage fails)
+        
+        // MOCK/Fallback configuration (Critical for standalone launch)
         const MOCK_CONFIG = {
-            apiKey: "AIzaSyC_mock_API_Key_for_Standalone_App", // This allows initialization to pass
-            authDomain: `${appId}.firebaseapp.com`,
-            projectId: appId, 
-            storageBucket: `${appId}.appspot.com`,
-            messagingSenderId: "123456789012",
+            // Using a simple, non-sensitive structure that allows initialization to pass
+            apiKey: "AIzaSyC_mock_API_Key_for_Standalone_App", 
+            authDomain: "sisyphus-mock.firebaseapp.com",
+            projectId: "sisyphus-mock", 
             appId: "1:123456789012:web:a0b1c2d3e4f5a6b7c8d9e0"
         };
 
-        try {
-            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-                 firebaseConfig = JSON.parse(__firebase_config);
-            }
-        } catch (e) { console.error("Error parsing environment config."); }
-        
-        if (Object.keys(firebaseConfig).length === 0) {
-            const storedConfig = localStorage.getItem('firebaseConfig');
-            if (storedConfig) {
-                try {
-                    firebaseConfig = JSON.parse(storedConfig);
-                } catch(e) { console.error("Error parsing localStorage config."); }
-            }
+        // 1. Try to get config from localStorage (most likely to succeed outside Canvas)
+        const storedConfig = localStorage.getItem('firebaseConfig');
+        if (storedConfig) {
+            try {
+                firebaseConfig = JSON.parse(storedConfig);
+            } catch(e) { console.error("Error parsing localStorage config."); }
         }
 
+        // 2. FALLBACK: Use MOCK config if none is found.
         if (Object.keys(firebaseConfig).length === 0) {
             firebaseConfig = MOCK_CONFIG;
-            console.warn("FALLBACK: Using MOCK Firebase config as real config was not found.");
+            console.warn("FALLBACK: Using MOCK Firebase config.");
         }
         
         // Initialize Firebase variables
@@ -164,7 +161,7 @@
         const GAME_DOC_ID = 'thriller_game';
         window.isFirebaseReady = false;
         
-        // Expose DOM elements globally for script functions
+        // Exposed DOM elements
         const choicesContainer = document.getElementById('choices-container');
         const storyOutput = document.getElementById('story-output');
         const imageContainer = document.getElementById('image-container');
@@ -175,8 +172,19 @@
         
         let chatHistory = [];
         let ambientSynth = null;
+        
+        // --- Custom UUID generation for reliable anonymous login ---
+        function getOrCreateUserId() {
+            let userId = localStorage.getItem('user_id_v2');
+            if (!userId) {
+                // Generate a simple UUID using CryptoJS (loaded via CDN)
+                userId = 'anon-' + (CryptoJS.lib.WordArray.random(16).toString());
+                localStorage.setItem('user_id_v2', userId);
+            }
+            return userId;
+        }
 
-
+        // --- Main Initialization Block ---
         if (Object.keys(firebaseConfig).length > 0) {
             try {
                 app = initializeApp(firebaseConfig);
@@ -187,12 +195,16 @@
                 // IMPORTANT: Store config in localStorage for future Mini App launches
                 localStorage.setItem('firebaseConfig', JSON.stringify(firebaseConfig));
 
-                // Sign in logic - SIMPLIFIED TO ANONYMOUS ONLY (The Fix)
+                // Sign in logic - Simplified and uses custom ID for stable storage path
                 (async () => {
+                    // Try to sign in anonymously
                     await signInAnonymously(auth).then(userCredential => {
-                        window.userId = userCredential.user.uid;
+                        // Use the anonymous UID provided by Firebase for the current session
+                        window.userId = userCredential.user.uid; 
                     }).catch(e => {
-                        console.error("Anonymous sign in failed:", e);
+                        console.error("Anonymous sign in failed, using local fallback ID:", e);
+                        // Fallback to local UUID if sign-in fails entirely (rare)
+                        window.userId = getOrCreateUserId(); 
                     });
                     
                     // Expose Firestore objects globally

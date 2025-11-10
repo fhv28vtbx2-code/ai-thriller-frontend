@@ -113,7 +113,7 @@
     <!-- Firebase Initialization and Game Logic (Module Script) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"; // Removed signInWithCustomToken
         import { getFirestore, setLogLevel, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
@@ -127,8 +127,9 @@
         
         // --- Firebase Config Fix for Mini App ---
         let firebaseConfig = {};
+        // Mock/Fallback configuration (used if environment/localStorage fails)
         const MOCK_CONFIG = {
-            apiKey: "AIzaSyC_mock_API_Key_for_Standalone_App",
+            apiKey: "AIzaSyC_mock_API_Key_for_Standalone_App", // This allows initialization to pass
             authDomain: `${appId}.firebaseapp.com`,
             projectId: appId, 
             storageBucket: `${appId}.appspot.com`,
@@ -137,27 +138,20 @@
         };
 
         try {
-            // 1. Try to get config from environment (original method)
             if (typeof __firebase_config !== 'undefined' && __firebase_config) {
                  firebaseConfig = JSON.parse(__firebase_config);
             }
-        } catch (e) {
-            console.error("Error parsing environment config.");
-        }
+        } catch (e) { console.error("Error parsing environment config."); }
         
-        // 2. Try to get config from localStorage (Mini App workaround)
         if (Object.keys(firebaseConfig).length === 0) {
             const storedConfig = localStorage.getItem('firebaseConfig');
             if (storedConfig) {
                 try {
                     firebaseConfig = JSON.parse(storedConfig);
-                } catch(e) {
-                    console.error("Error parsing localStorage config.");
-                }
+                } catch(e) { console.error("Error parsing localStorage config."); }
             }
         }
 
-        // 3. FALLBACK: Use MOCK config if none is found. This prevents initialization error (THE FIX)
         if (Object.keys(firebaseConfig).length === 0) {
             firebaseConfig = MOCK_CONFIG;
             console.warn("FALLBACK: Using MOCK Firebase config as real config was not found.");
@@ -193,28 +187,12 @@
                 // IMPORTANT: Store config in localStorage for future Mini App launches
                 localStorage.setItem('firebaseConfig', JSON.stringify(firebaseConfig));
 
-                // Sign in logic
+                // Sign in logic - SIMPLIFIED TO ANONYMOUS ONLY (The Fix)
                 (async () => {
-                    await new Promise(resolve => {
-                        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                        
-                        if (initialAuthToken) {
-                            signInWithCustomToken(auth, initialAuthToken).then(userCredential => {
-                                window.userId = userCredential.user.uid;
-                                resolve();
-                            }).catch(e => {
-                                console.error("Custom token sign in failed, using anonymous:", e);
-                                signInAnonymously(auth).then(userCredential => {
-                                    window.userId = userCredential.user.uid;
-                                    resolve();
-                                });
-                            });
-                        } else {
-                            signInAnonymously(auth).then(userCredential => {
-                                window.userId = userCredential.user.uid;
-                                resolve();
-                            });
-                        }
+                    await signInAnonymously(auth).then(userCredential => {
+                        window.userId = userCredential.user.uid;
+                    }).catch(e => {
+                        console.error("Anonymous sign in failed:", e);
                     });
                     
                     // Expose Firestore objects globally
@@ -241,7 +219,8 @@
                 document.getElementById('story-output').innerHTML = '<p class="text-red-400">Ошибка инициализации Firebase. Игра недоступна. (Код 102)</p>';
             }
         } else {
-             document.getElementById('story-output').innerHTML = '<p class="text-red-400">Ошибка инициализации Firebase. Игра недоступна. (Код 101: Конфигурация не найдена)</p>';
+             // This case should be prevented by the MOCK config fallback
+             document.getElementById('story-output').innerHTML = '<p class="text-red-400">КРИТИЧЕСКАЯ ОШИБКА: Конфигурация Firebase полностью отсутствует. </p>';
         }
         
         
@@ -338,7 +317,7 @@
         };
 
         async function saveGame(storyData) {
-            if (storyData.storySegment.toUpperCase().includes("КОНЕЦ ИГРЫ:") || !window.db || !window.userId) return;
+            if (!window.isFirebaseReady || storyData.storySegment.toUpperCase().includes("КОНЕЦ ИГРЫ:") || !window.db || !window.userId) return;
 
             const dataToSave = {
                 chatHistoryJSON: JSON.stringify(chatHistory),

@@ -1,32 +1,152 @@
-```html
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI-Триллер: Бесконечный Сюжет</title>
+    <title>СИЗИФ - AI-Триллер</title>
+    
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Load Tone.js for sound -->
+    <!-- Load Tone.js for sound effects (non-module) -->
     <script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
-    <!-- Load Firebase SDKs -->
+
+    <style>
+        /* Base styles optimized for dark mode and mobile readability */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #121212; /* Более глубокий черный фон */
+            color: #E0E0E0; /* Светлый текст для лучшей читаемости */
+        }
+        .story-container {
+            max-height: 50vh; 
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #dc2626 #3f3f46; /* Красный с темно-серым */
+        }
+        .story-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .story-container::-webkit-scrollbar-thumb {
+            background-color: #dc2626; /* Яркий красный скроллбар */
+            border-radius: 4px;
+        }
+        /* Pulse animation for loading indicator */
+        .image-loading {
+            background: #272727;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+        .choice-button {
+            transition: all 0.2s;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 sm:p-8 flex flex-col items-center">
+
+    <!-- Initial Prompt Modal -->
+    <div id="initial-prompt-modal" class="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center hidden">
+        <div class="bg-[#1e1e1e] p-8 rounded-2xl max-w-sm w-full shadow-2xl border border-red-700">
+            <h2 id="modal-title" class="text-3xl font-bold text-red-500 mb-4">Начать игру</h2>
+            <p id="modal-text" class="text-gray-400 mb-6">Проверка сохраненного прогресса...</p>
+            <div id="modal-actions" class="flex justify-between space-x-4 hidden">
+                <button onclick="window.startGame(true); window.closeModal();" class="w-1/2 bg-gray-700 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition duration-200">
+                    Новая Игра
+                </button>
+                <button onclick="window.continueGame(); window.closeModal();" id="continue-button" class="w-1/2 bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition duration-200" disabled>
+                    Продолжить (Ход: 1)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="app-container" class="w-full max-w-xl mx-auto bg-[#1a1a1a] rounded-3xl shadow-2xl p-6 sm:p-8 border border-gray-700">
+
+        <header class="text-center mb-6">
+            <h1 class="text-4xl sm:text-5xl font-black text-red-500 tracking-wider mb-1">
+                СИЗИФ
+            </h1>
+            <p class="text-sm text-gray-400">AI-Триллер с бесконечным сюжетом</p>
+            <p id="user-info" class="text-xs text-gray-600 mt-2 hidden">UserID: Загрузка...</p>
+        </header>
+        
+        <!-- Image Container -->
+        <div id="image-container" class="mb-6 rounded-2xl overflow-hidden shadow-2xl border border-red-800 aspect-[4/3] bg-gray-800 flex items-center justify-center">
+             <div id="image-loader" class="text-center p-8">
+                <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p class="text-sm text-gray-400 mt-2">Иллюстрация создается ИИ...</p>
+             </div>
+        </div>
+
+        <!-- Story Output Area -->
+        <div id="story-output" class="story-container bg-[#272727] p-5 rounded-xl mb-6 border border-gray-700 transition-all duration-300 shadow-inner">
+            <p class="text-gray-400">Ожидание загрузки Firebase и проверки прогресса...</p>
+        </div>
+
+        <!-- Loading Indicator for Text/Logic -->
+        <div id="loading-spinner" class="text-center hidden mb-6">
+            <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-sm text-gray-400 mt-2">ИИ обдумывает твой следующий шаг...</p>
+        </div>
+
+        <!-- Choices Area -->
+        <div id="choices-container" class="flex flex-col space-y-3">
+            <!-- Buttons will be generated here -->
+        </div>
+
+        <!-- Restart Button -->
+        <div class="mt-8 text-center">
+             <button onclick="window.startGame(true)" id="restart-button" class="bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition duration-300 ease-in-out transform hover:scale-[1.02] active:scale-[0.98] border border-red-900 disabled:opacity-50">
+                Начать Новую Игру
+            </button>
+        </div>
+
+    </div>
+
+    <!-- Firebase Initialization and Game Logic (Module Script) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, setLogLevel, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // =================================================================================
+        //                                 КОНФИГУРАЦИЯ БЭКЕНДА (ССЫЛКА ВСТАВЛЕНА!)
+        // =================================================================================
+        const BACKEND_URL = 'https://ai-thriller-backend.vercel.app/api/advance-story'; 
+        // =================================================================================
 
         // Global variables provided by the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // Initialize Firebase
+        // Initialize Firebase variables
         let app, db, auth;
         window.appId = appId;
         const GAME_COLLECTION = 'game_saves';
         const GAME_DOC_ID = 'thriller_game';
-
         window.isFirebaseReady = false;
+        
+        // Expose DOM elements globally for script functions
+        const choicesContainer = document.getElementById('choices-container');
+        const storyOutput = document.getElementById('story-output');
+        const imageContainer = document.getElementById('image-container');
+        const imageLoader = document.getElementById('image-loader');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const restartButton = document.getElementById('restart-button');
+        const userInfo = document.getElementById('user-info');
+        
+        let chatHistory = [];
+        let ambientSynth = null;
+
 
         try {
             app = initializeApp(firebaseConfig);
@@ -79,125 +199,7 @@
             console.error("Firebase initialization failed:", error);
             document.getElementById('story-output').innerHTML = '<p class="text-red-400">Ошибка инициализации Firebase. Игра недоступна.</p>';
         }
-    </script>
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #1f1f1f; /* Сделали фон немного светлее */
-        }
-        .story-container {
-            max-height: 50vh; 
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: #be185d #3f3f46;
-        }
-        .story-container::-webkit-scrollbar {
-            width: 8px;
-        }
-        .story-container::-webkit-scrollbar-thumb {
-            background-color: #be185d;
-            border-radius: 4px;
-        }
-        .image-loading {
-            background: #3f3f46;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 0.5; }
-            50% { opacity: 1; }
-        }
-    </style>
-</head>
-<body class="text-gray-100 min-h-screen p-4 sm:p-8 flex flex-col items-center">
-
-    <!-- Initial Prompt Modal -->
-    <div id="initial-prompt-modal" class="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center hidden">
-        <div class="bg-gray-800 p-8 rounded-xl max-w-sm w-full shadow-2xl border border-red-700">
-            <h2 id="modal-title" class="text-2xl font-bold text-red-500 mb-4">Начать игру</h2>
-            <p id="modal-text" class="text-gray-300 mb-6">Проверка сохраненного прогресса...</p>
-            <div id="modal-actions" class="flex justify-between space-x-4 hidden">
-                <button onclick="window.startGame(true); window.closeModal();" class="w-1/2 bg-gray-700 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-xl transition duration-200">
-                    Новая Игра
-                </button>
-                <button onclick="window.continueGame(); window.closeModal();" id="continue-button" class="w-1/2 bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-4 rounded-xl transition duration-200">
-                    Продолжить (Ход: 1)
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <div id="app-container" class="w-full max-w-lg mx-auto bg-gray-900 rounded-2xl shadow-2xl p-6 sm:p-8">
-
-        <header class="text-center mb-6">
-            <h1 class="text-3xl sm:text-4xl font-extrabold text-red-500 tracking-wider mb-2">
-                СИЗИФ - AI-Триллер
-            </h1>
-            <p class="text-sm text-gray-400">Сюжет и иллюстрации генерируются нейросетью.</p>
-            <p id="user-info" class="text-xs text-gray-500 mt-1 hidden">UserID: Загрузка...</p>
-        </header>
         
-        <!-- Image Container -->
-        <div id="image-container" class="mb-6 rounded-xl overflow-hidden shadow-xl border border-gray-700 aspect-[4/3] bg-gray-800 flex items-center justify-center">
-             <div id="image-loader" class="text-center p-8">
-                <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <p class="text-sm text-gray-400 mt-2">Иллюстрация создается ИИ...</p>
-             </div>
-        </div>
-
-        <!-- Story Output Area -->
-        <div id="story-output" class="story-container bg-gray-800 p-4 rounded-xl mb-6 border border-gray-700 transition-all duration-300">
-            <!-- Content will be set by JS -->
-            <p class="text-gray-400">Ожидание загрузки Firebase и проверки прогресса...</p>
-        </div>
-
-        <!-- Loading Indicator for Text/Logic -->
-        <div id="loading-spinner" class="text-center hidden mb-6">
-            <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="text-sm text-gray-400 mt-2">ИИ обдумывает твой следующий шаг...</p>
-        </div>
-
-        <!-- Choices Area -->
-        <div id="choices-container" class="flex flex-col space-y-3">
-            <!-- Buttons will be generated here -->
-        </div>
-
-        <!-- Restart Button -->
-        <div class="mt-8 text-center">
-             <button onclick="window.startGame(true)" id="restart-button" class="bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition duration-300 ease-in-out transform hover:scale-[1.02] active:scale-[0.98] border border-red-900 disabled:opacity-50" disabled>
-                Начать Новую Игру
-            </button>
-        </div>
-
-    </div>
-
-    <script>
-        // =================================================================================
-        //                                 КОНФИГУРАЦИЯ БЭКЕНДА
-        // =================================================================================
-        // !!! ВАЖНО: ЗАМЕНИТЬ ЭТОТ АДРЕС НА ВАШ АДРЕС VERCEL !!!
-        const BACKEND_URL = 'https://ai-thriller-backend.vercel.app//api/advance-story'; 
-        // Пример: 'https://ai-thriller-backend-xxxx.vercel.app/api/advance-story' 
-        // =================================================================================
-
-        let chatHistory = [];
-        const choicesContainer = document.getElementById('choices-container');
-        const storyOutput = document.getElementById('story-output');
-        const imageContainer = document.getElementById('image-container');
-        const imageLoader = document.getElementById('image-loader');
-        const loadingSpinner = document.getElementById('loading-spinner');
-        const restartButton = document.getElementById('restart-button');
-        const userInfo = document.getElementById('user-info');
-        
-        let ambientSynth = null;
-        const GAME_COLLECTION = 'game_saves';
-        const GAME_DOC_ID = 'thriller_game';
-
         // --- UTILITY FUNCTIONS ---
 
         // Waits until Firebase is ready, then executes callback
@@ -392,7 +394,7 @@
         };
 
         window.makeChoice = function(choiceText) {
-            storyOutput.innerHTML += `<div class="mt-4 border-t border-gray-700 pt-4"><p class="font-semibold text-red-400">👉 Выбор:</p><p class="italic text-gray-300">"${choiceText}"</p></div>`;
+            storyOutput.innerHTML += `<div class="mt-4 border-t border-gray-800 pt-4"><p class="font-semibold text-red-400">👉 Выбор:</p><p class="italic text-gray-300">"${choiceText}"</p></div>`;
             choicesContainer.innerHTML = ''; 
             
             chatHistory.push({ role: "user", parts: [{ text: `Мой выбор: ${choiceText}. Продолжи историю и дай 3 новых выбора.` }] });
@@ -446,7 +448,8 @@
             const newSegment = storyData.storySegment.trim();
             const choices = Array.isArray(storyData.choices) ? storyData.choices : [];
             
-            storyOutput.innerHTML += `<div class="mt-6 border-t border-gray-700 pt-4"><p class="text-gray-300">${newSegment}</p></div>`; /* Изменили цвет текста на более светлый */
+            // UI Improvement: Use lighter text for the story output
+            storyOutput.innerHTML += `<div class="mt-6 border-t border-gray-800 pt-4"><p class="text-gray-200">${newSegment}</p></div>`;
 
             storyOutput.scrollTop = storyOutput.scrollHeight;
 
@@ -460,7 +463,7 @@
             const isGameOver = newSegment.toUpperCase().includes("КОНЕЦ ИГРЫ:") || choices.length === 0;
 
             if (isGameOver) {
-                choicesContainer.innerHTML = `<p class="text-center text-lg text-red-500 font-bold mt-4">*** КОНЕЦ ИСТОРИИ ***</p>`;
+                choicesContainer.innerHTML = `<p class="text-center text-xl text-red-500 font-bold mt-4">*** КОНЕЦ ИСТОРИИ ***</p>`;
                 restartButton.disabled = false;
                 Tone.Transport.stop(); 
                 const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
@@ -471,7 +474,8 @@
                 choices.forEach((choice, index) => {
                     if (index < 3) { 
                         const button = document.createElement('button');
-                        button.className = 'choice-button bg-gray-700 hover:bg-red-600 text-gray-100 font-medium py-3 px-4 rounded-xl shadow-md transition duration-200 ease-in-out text-left border border-gray-600';
+                        // UI Improvement: Enhanced button style
+                        button.className = 'choice-button bg-[#272727] hover:bg-red-800 text-gray-100 font-medium py-3 px-4 rounded-xl shadow-md transition duration-200 ease-in-out text-left border border-red-700/50 hover:border-red-500';
                         button.textContent = `${index + 1}. ${choice.trim()}`;
                         button.onclick = () => window.makeChoice(choice.trim());
                         choicesContainer.appendChild(button);
@@ -489,7 +493,7 @@
             const img = document.createElement('img');
             img.src = imageUrl;
             img.alt = "Иллюстрация к истории";
-            img.className = 'w-full h-full object-cover rounded-xl';
+            img.className = 'w-full h-full object-cover rounded-2xl';
             
             imageContainer.innerHTML = '';
             imageContainer.appendChild(img);
@@ -499,5 +503,5 @@
     </script>
 </body>
 </html>
-```
+
 

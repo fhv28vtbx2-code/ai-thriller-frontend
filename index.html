@@ -118,16 +118,38 @@
         import { getFirestore, setLogLevel, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =================================================================================
-        //                                 КОНФИГУРАЦИЯ БЭКЕНДА (ССЫЛКА ВСТАВЛЕНА!)
+        //                                 КОНФИГУРАЦИЯ БЭКЕНДА
         // =================================================================================
+        // Ссылка, вставленная пользователем:
         const BACKEND_URL = 'https://ai-thriller-backend.vercel.app/api/advance-story'; 
         // =================================================================================
 
         // Global variables provided by the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
+        
+        // --- Firebase Config Fix for Mini App ---
+        let firebaseConfig = {};
+        try {
+            // 1. Try to get config from environment (original method)
+            if (typeof __firebase_config !== 'undefined') {
+                 firebaseConfig = JSON.parse(__firebase_config);
+            }
+        } catch (e) {
+            console.error("Error parsing environment config.");
+        }
+        
+        // 2. Try to get config from localStorage (Mini App workaround)
+        if (Object.keys(firebaseConfig).length === 0) {
+            const storedConfig = localStorage.getItem('firebaseConfig');
+            if (storedConfig) {
+                try {
+                    firebaseConfig = JSON.parse(storedConfig);
+                } catch(e) {
+                    console.error("Error parsing localStorage config.");
+                }
+            }
+        }
+        
         // Initialize Firebase variables
         let app, db, auth;
         window.appId = appId;
@@ -148,57 +170,67 @@
         let ambientSynth = null;
 
 
-        try {
-            app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            setLogLevel('debug');
+        if (Object.keys(firebaseConfig).length > 0) {
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                setLogLevel('debug');
+                
+                // IMPORTANT: Store config in localStorage for future Mini App launches
+                localStorage.setItem('firebaseConfig', JSON.stringify(firebaseConfig));
 
-            // Sign in logic
-            (async () => {
-                await new Promise(resolve => {
-                    if (initialAuthToken) {
-                        signInWithCustomToken(auth, initialAuthToken).then(userCredential => {
-                            window.userId = userCredential.user.uid;
-                            resolve();
-                        }).catch(e => {
-                            console.error("Custom token sign in failed, using anonymous:", e);
+                // Sign in logic
+                (async () => {
+                    await new Promise(resolve => {
+                        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                        
+                        if (initialAuthToken) {
+                            signInWithCustomToken(auth, initialAuthToken).then(userCredential => {
+                                window.userId = userCredential.user.uid;
+                                resolve();
+                            }).catch(e => {
+                                console.error("Custom token sign in failed, using anonymous:", e);
+                                signInAnonymously(auth).then(userCredential => {
+                                    window.userId = userCredential.user.uid;
+                                    resolve();
+                                });
+                            });
+                        } else {
                             signInAnonymously(auth).then(userCredential => {
                                 window.userId = userCredential.user.uid;
                                 resolve();
                             });
-                        });
-                    } else {
-                        signInAnonymously(auth).then(userCredential => {
-                            window.userId = userCredential.user.uid;
-                            resolve();
-                        });
-                    }
-                });
-                
-                // Expose Firestore objects globally
-                window.db = db;
-                window.auth = auth;
-                window.doc = doc;
-                window.setDoc = setDoc;
-                window.getDoc = getDoc;
-                window.isFirebaseReady = true; // Set flag to true
+                        }
+                    });
+                    
+                    // Expose Firestore objects globally
+                    window.db = db;
+                    window.auth = auth;
+                    window.doc = doc;
+                    window.setDoc = setDoc;
+                    window.getDoc = getDoc;
+                    window.isFirebaseReady = true; // Set flag to true
 
-                console.log("Firebase initialized and signed in. User ID:", window.userId);
+                    console.log("Firebase initialized and signed in. User ID:", window.userId);
 
-                // Start the game flow (loading modal)
-                document.addEventListener('DOMContentLoaded', () => {
-                    if (typeof window.showInitialPrompt === 'function') {
-                        window.showInitialPrompt();
-                    }
-                });
+                    // Start the game flow (loading modal)
+                    document.addEventListener('DOMContentLoaded', () => {
+                        if (typeof window.showInitialPrompt === 'function') {
+                            window.showInitialPrompt();
+                        }
+                    });
 
-            })();
+                })();
 
-        } catch (error) {
-            console.error("Firebase initialization failed:", error);
-            document.getElementById('story-output').innerHTML = '<p class="text-red-400">Ошибка инициализации Firebase. Игра недоступна.</p>';
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                document.getElementById('story-output').innerHTML = '<p class="text-red-400">Ошибка инициализации Firebase. Игра недоступна. (Код 102)</p>';
+            }
+        } else {
+             document.getElementById('story-output').innerHTML = '<p class="text-red-400">Ошибка инициализации Firebase. Игра недоступна. (Код 101: Конфигурация не найдена)</p>';
         }
+        
         
         // --- UTILITY FUNCTIONS ---
 
@@ -503,5 +535,5 @@
     </script>
 </body>
 </html>
-
+```
 

@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,14 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI-Триллер: Бесконечный Сюжет</title>
     <!-- Load Tailwind CSS -->
-    <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <!-- Load Tone.js for sound -->
-    <script src="[https://unpkg.com/tone@14.7.58/build/Tone.js](https://unpkg.com/tone@14.7.58/build/Tone.js)"></script>
+    <script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
     <!-- Load Firebase SDKs -->
     <script type="module">
-        import { initializeApp } from "[https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js](https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js)";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "[https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js](https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js)";
-        import { getFirestore, setLogLevel, doc, setDoc, getDoc } from "[https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js](https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js)";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, setLogLevel, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global variables provided by the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -24,6 +25,8 @@
         window.appId = appId;
         const GAME_COLLECTION = 'game_saves';
         const GAME_DOC_ID = 'thriller_game';
+
+        window.isFirebaseReady = false;
 
         try {
             app = initializeApp(firebaseConfig);
@@ -59,7 +62,8 @@
                 window.doc = doc;
                 window.setDoc = setDoc;
                 window.getDoc = getDoc;
-                
+                window.isFirebaseReady = true; // Set flag to true
+
                 console.log("Firebase initialized and signed in. User ID:", window.userId);
 
                 // Start the game flow (loading modal)
@@ -79,7 +83,7 @@
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #1a1a1a;
+            background-color: #1f1f1f; /* Сделали фон немного светлее */
         }
         .story-container {
             max-height: 50vh; 
@@ -129,12 +133,13 @@
                 СИЗИФ - AI-Триллер
             </h1>
             <p class="text-sm text-gray-400">Сюжет и иллюстрации генерируются нейросетью.</p>
+            <p id="user-info" class="text-xs text-gray-500 mt-1 hidden">UserID: Загрузка...</p>
         </header>
         
         <!-- Image Container -->
         <div id="image-container" class="mb-6 rounded-xl overflow-hidden shadow-xl border border-gray-700 aspect-[4/3] bg-gray-800 flex items-center justify-center">
-             <div id="image-loader" class="text-center">
-                <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" fill="none" viewBox="0 0 24 24">
+             <div id="image-loader" class="text-center p-8">
+                <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
@@ -150,7 +155,7 @@
 
         <!-- Loading Indicator for Text/Logic -->
         <div id="loading-spinner" class="text-center hidden mb-6">
-            <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" fill="none" viewBox="0 0 24 24">
+            <svg class="animate-spin h-8 w-8 text-red-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -177,7 +182,7 @@
         // =================================================================================
         // !!! ВАЖНО: ЗАМЕНИТЬ ЭТОТ АДРЕС НА ВАШ АДРЕС VERCEL !!!
         const BACKEND_URL = 'https://ai-thriller-backend.vercel.app//api/advance-story'; 
-        // Пример: '[https://ai-thriller-backend-xxxx.vercel.app/api/advance-story](https://ai-thriller-backend-xxxx.vercel.app/api/advance-story)' 
+        // Пример: 'https://ai-thriller-backend-xxxx.vercel.app/api/advance-story' 
         // =================================================================================
 
         let chatHistory = [];
@@ -187,11 +192,23 @@
         const imageLoader = document.getElementById('image-loader');
         const loadingSpinner = document.getElementById('loading-spinner');
         const restartButton = document.getElementById('restart-button');
+        const userInfo = document.getElementById('user-info');
         
         let ambientSynth = null;
         const GAME_COLLECTION = 'game_saves';
         const GAME_DOC_ID = 'thriller_game';
 
+        // --- UTILITY FUNCTIONS ---
+
+        // Waits until Firebase is ready, then executes callback
+        function waitForFirebase(callback) {
+            if (window.isFirebaseReady) {
+                callback();
+            } else {
+                setTimeout(() => waitForFirebase(callback), 100);
+            }
+        }
+        
         // --- MODAL & INITIAL PROMPT LOGIC ---
         
         window.closeModal = () => {
@@ -199,32 +216,39 @@
         };
 
         window.showInitialPrompt = async function() {
-            if (!window.db || !window.userId) {
-                setTimeout(window.showInitialPrompt, 500); 
-                return;
-            }
-            
-            document.getElementById('initial-prompt-modal').classList.remove('hidden');
-            document.getElementById('modal-title').textContent = 'СИЗИФ';
-            document.getElementById('modal-text').textContent = 'Проверяем сохраненный прогресс...';
-            document.getElementById('modal-actions').classList.add('hidden');
+            waitForFirebase(async () => {
+                userInfo.textContent = `UserID: ${window.userId}`;
+                userInfo.classList.remove('hidden');
 
-            const savedGame = await window.loadGame();
-            const modalActions = document.getElementById('modal-actions');
-            const continueButton = document.getElementById('continue-button');
+                document.getElementById('initial-prompt-modal').classList.remove('hidden');
+                document.getElementById('modal-title').textContent = 'СИЗИФ';
+                document.getElementById('modal-text').textContent = 'Проверяем сохраненный прогресс...';
+                document.getElementById('modal-actions').classList.add('hidden');
 
-            if (savedGame) {
-                const historyLength = JSON.parse(savedGame.chatHistoryJSON).length;
-                const turnNumber = Math.ceil(historyLength / 2);
-                
-                document.getElementById('modal-text').textContent = 'Найдена сохраненная игра.';
-                continueButton.textContent = `Продолжить (Ход: ${turnNumber})`;
-                continueButton.disabled = false;
-            } else {
-                document.getElementById('modal-text').textContent = 'Сохраненных игр не найдено. Начните новую игру.';
-                continueButton.disabled = true;
-            }
-            modalActions.classList.remove('hidden');
+                const savedGame = await window.loadGame();
+                const modalActions = document.getElementById('modal-actions');
+                const continueButton = document.getElementById('continue-button');
+
+                if (savedGame) {
+                    try {
+                        const historyLength = JSON.parse(savedGame.chatHistoryJSON).length;
+                        const turnNumber = Math.ceil(historyLength / 2);
+                        
+                        document.getElementById('modal-text').textContent = 'Найдена сохраненная игра.';
+                        continueButton.textContent = `Продолжить (Ход: ${turnNumber})`;
+                        continueButton.disabled = false;
+                    } catch(e) {
+                         // Corrupted save, force new game
+                        document.getElementById('modal-text').textContent = 'Ошибка загрузки сохранения. Начните новую игру.';
+                        continueButton.disabled = true;
+                    }
+
+                } else {
+                    document.getElementById('modal-text').textContent = 'Сохраненных игр не найдено. Начните новую игру.';
+                    continueButton.disabled = true;
+                }
+                modalActions.classList.remove('hidden');
+            });
         };
 
         // --- GAME SAVING/LOADING (Firestore) ---
@@ -233,16 +257,18 @@
             window.startAudio(); 
             window.loadGame().then(savedGame => {
                 if (savedGame) {
-                    chatHistory = JSON.parse(savedGame.chatHistoryJSON);
-                    
-                    storyOutput.innerHTML = '';
-                    
-                    // Display the last user choice before calling the API for the model response
-                    const lastUserPart = chatHistory[chatHistory.length - 1].parts[0].text;
-                    storyOutput.innerHTML = `<div class="mt-4 border-t border-gray-700 pt-4"><p class="font-semibold text-red-400">👉 Последний Выбор:</p><p class="italic text-gray-300">"${lastUserPart.replace('Мой выбор: ', '').replace('. Продолжи историю и дай 3 новых выбора.', '')}"</p></div>`;
-
-                    // Now, resume the story by calling the API
-                    advanceStory();
+                    try {
+                        chatHistory = JSON.parse(savedGame.chatHistoryJSON);
+                        
+                        storyOutput.innerHTML = `<p class="text-gray-300">${savedGame.lastSegment}</p>`;
+                        
+                        // Call the API to resume the story
+                        advanceStory();
+                    } catch (e) {
+                         // If JSON parse fails, start a new game
+                        console.error("Failed to parse saved history, starting new game.");
+                        window.startGame(true);
+                    }
                 } else {
                     window.startGame(true); 
                 }
@@ -250,11 +276,12 @@
         };
         
         window.loadGame = async function() {
+            if (!window.db || !window.userId) return null;
             try {
                 const docRef = window.doc(window.db, 'artifacts', window.appId, 'users', window.userId, GAME_COLLECTION, GAME_DOC_ID);
                 const docSnap = await window.getDoc(docRef);
 
-                if (docSnap.exists() && docSnap.data().chatHistoryJSON && JSON.parse(docSnap.data().chatHistoryJSON).length > 0) {
+                if (docSnap.exists() && docSnap.data().chatHistoryJSON) {
                     return docSnap.data();
                 }
             } catch(e) {
@@ -264,10 +291,8 @@
         };
 
         async function saveGame(storyData) {
-            // Only save if the story is NOT over
             if (storyData.storySegment.toUpperCase().includes("КОНЕЦ ИГРЫ:") || !window.db || !window.userId) return;
 
-            // Save the current chat history for context
             const dataToSave = {
                 chatHistoryJSON: JSON.stringify(chatHistory),
                 lastSegment: storyData.storySegment,
@@ -282,16 +307,11 @@
             }
         }
         
-        window.addEventListener('beforeunload', () => {
-             console.log("Saving game state on unload attempt...");
-        });
-
-
         // --- AMBIENCE/SOUND LOGIC (Tone.js) ---
 
         let ambientPart = null;
 
-        function startAudio() {
+        window.startAudio = function() {
             if (Tone.context.state !== 'running') {
                 Tone.start();
                 initAmbiance();
@@ -384,6 +404,10 @@
 
         async function advanceStory() {
             loadingSpinner.classList.remove('hidden');
+            imageContainer.classList.add('image-loading');
+            imageContainer.innerHTML = '';
+            imageLoader.classList.remove('hidden');
+
             
             try {
                 const response = await fetch(BACKEND_URL, {
@@ -422,7 +446,7 @@
             const newSegment = storyData.storySegment.trim();
             const choices = Array.isArray(storyData.choices) ? storyData.choices : [];
             
-            storyOutput.innerHTML += `<div class="mt-6 border-t border-gray-700 pt-4"><p class="text-gray-100">${newSegment}</p></div>`;
+            storyOutput.innerHTML += `<div class="mt-6 border-t border-gray-700 pt-4"><p class="text-gray-300">${newSegment}</p></div>`; /* Изменили цвет текста на более светлый */
 
             storyOutput.scrollTop = storyOutput.scrollHeight;
 
